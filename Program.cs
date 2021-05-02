@@ -40,7 +40,7 @@ namespace photo_organiser
                     var extension = Path.GetExtension(f).ToLower();
                     if (extension == ".jpg") {
                       AddImage(f);
-                    } else if (extension == ".mp4") {
+                    } else if (extension == ".mp4" || extension == ".mpg" || extension == ".3gp" || extension == ".avi") {
                       AddMovie(f);
                     } else {
                       Console.WriteLine($"Unknown extension {extension} for file {f}.");
@@ -56,7 +56,8 @@ namespace photo_organiser
             {
                 foreach(var f in fileList)
                 {
-                  var year = f.Key.Substring(0,4);
+                  var date = DateTime.Parse(f.Key);
+                  var year = date.Year.ToString();
 
                   var destDir = Path.Join(outputDir, Path.Join(year, f.Key));
                   if (!Directory.Exists(destDir))
@@ -65,7 +66,12 @@ namespace photo_organiser
                   }
                   foreach (var fileName in f.Value)
                   {
-                    File.Copy(fileName, Path.Join(destDir, Path.GetFileName(fileName)));
+
+                    var destFileName = Path.Join(destDir, Path.GetFileName(fileName));
+                    File.Copy(fileName, destFileName);
+                    // Set date since we might use this to determine when the video was taken
+                    File.SetLastWriteTime(destFileName, date);
+                    File.SetCreationTime(destFileName, date);
                   }
                 }
             }
@@ -74,7 +80,7 @@ namespace photo_organiser
             {
                 var date = GetDateTakenFromImage(f);
                 var dateKey = date.ToString("yyyy-MM-dd");
-                Console.WriteLine($"File {f} was taken on {date.ToShortDateString()}");                  
+                Console.WriteLine($"File {f} was taken on {dateKey}");                  
                 if (!fileList.ContainsKey(dateKey)) {
                   fileList[dateKey] = new List<string>();
                 }
@@ -83,14 +89,16 @@ namespace photo_organiser
 
             private void AddMovie(string fileName)
             {
-              var strDateIndex = fileName.IndexOf("20");
-              if (strDateIndex == -1) 
+              var strDateIndex = fileName.LastIndexOf("20");
+              var dateKey = "";
+              // If the string contains a 20 and it's at least 8 characters long
+              if (strDateIndex != -1 && fileName.Length - strDateIndex > 8) 
               {
-                Console.WriteLine($"Unable to find a date in fileName {fileName}.");
-                return;
-              }
-
-              var dateKey = $"{fileName.Substring(strDateIndex, 4)}-{fileName.Substring(strDateIndex, 2)}-{fileName.Substring(strDateIndex, 2)}";
+                dateKey = $"{fileName.Substring(strDateIndex, 4)}-{fileName.Substring(strDateIndex + 4, 2)}-{fileName.Substring(strDateIndex + 6, 2)}";                
+              } else {
+                dateKey = File.GetLastWriteTime(fileName).ToString("yyyy-MM-dd");
+              }           
+              
               Console.WriteLine($"File {fileName} was taken on {dateKey}");
 
               // Attempt to shrink movie using ffmpeg, and use new filename if it is smaller
@@ -98,10 +106,11 @@ namespace photo_organiser
               var destFile = Path.GetTempPath() + Path.GetFileName(fileName);
               // Delete file if already exists
               File.Delete(destFile);
-              // Create new temp file
 
               // Run ffmpeg to try and shrink the file
-              var procInfo = new ProcessStartInfo("ffmpeg", $"-i {fileName} -c:v libx264 -preset medium -crf 25 -movflags +faststart -acodec aac -strict experimental -ab 96k {destFile}");
+              // libx264 = CPU 
+              // H264_AMF = GPU
+              var procInfo = new ProcessStartInfo("ffmpeg", $"-i {fileName} -c:v h264_amf -preset medium -crf 25 -movflags +faststart -acodec aac -strict experimental -ab 96k {destFile}");
               try
               {
                 var procResult = Process.Start(procInfo);
