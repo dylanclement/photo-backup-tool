@@ -1,11 +1,11 @@
-﻿using System;
+using System;
+using System.Text.RegularExpressions;
 using System.Collections.Generic;
+using System.IO;
 using System.Diagnostics;
 using System.Drawing;
 using System.Drawing.Imaging;
-using System.IO;
 using System.Text;
-using System.Text.RegularExpressions;
 using CommandLine;
 
 namespace photo_organiser
@@ -40,7 +40,7 @@ namespace photo_organiser
                     var extension = Path.GetExtension(f).ToLower();
                     if (extension == ".jpg") {
                       AddImage(f);
-                    } else if (extension == ".mp4" || extension == ".mpg" || extension == ".3gp" || extension == ".avi") {
+                    } else if (extension == ".mp4" || extension == ".mpg" || extension == ".3gp" || extension == ".avi" || extension == ".mov") {
                       AddMovie(f);
                     } else {
                       Console.WriteLine($"Unknown extension {extension} for file {f}.");
@@ -56,14 +56,20 @@ namespace photo_organiser
             {
                 foreach(var f in fileList)
                 {
-                  var date = DateTime.Parse(f.Key);
+                  DateTime date;
+
+                  if (!DateTime.TryParse(f.Key, out date))
+                  {
+                    date = DateTime.UnixEpoch;
+                  }
+                  
                   var year = date.Year.ToString();
 
                   var destDir = Path.Join(outputDir, Path.Join(year, f.Key));
-                  if (!Directory.Exists(destDir))
-                  {
-                    Directory.CreateDirectory(destDir);
-                  }
+                  
+                  // Make sure directory exists
+                  Directory.CreateDirectory(destDir);
+                  
                   foreach (var fileName in f.Value)
                   {
 
@@ -87,30 +93,46 @@ namespace photo_organiser
                 fileList[dateKey].Add(f);
             }
 
-            private void AddMovie(string fileName)
+            private void AddMovie(string fullPath)
             {
+              var fileName = Path.GetFileName(fullPath);
               var strDateIndex = fileName.LastIndexOf("20");
               var dateKey = "";
+              
               // If the string contains a 20 and it's at least 8 characters long
               if (strDateIndex != -1 && fileName.Length - strDateIndex > 8) 
               {
                 dateKey = $"{fileName.Substring(strDateIndex, 4)}-{fileName.Substring(strDateIndex + 4, 2)}-{fileName.Substring(strDateIndex + 6, 2)}";                
               } else {
-                dateKey = File.GetLastWriteTime(fileName).ToString("yyyy-MM-dd");
+                dateKey = File.GetLastWriteTime(fullPath).ToString("yyyy-MM-dd");
               }           
               
-              Console.WriteLine($"File {fileName} was taken on {dateKey}");
+              Console.WriteLine($"File {fullPath} was taken on {dateKey}");
 
               // Attempt to shrink movie using ffmpeg, and use new filename if it is smaller
               // Create a temp file with same name in $TMP folder
-              var destFile = Path.GetTempPath() + Path.GetFileName(fileName);
+              var destFile = Path.GetTempPath() + fileName;
               // Delete file if already exists
               File.Delete(destFile);
 
               // Run ffmpeg to try and shrink the file
               // libx264 = CPU 
               // H264_AMF = GPU
-              var procInfo = new ProcessStartInfo("ffmpeg", $"-i {fileName} -c:v h264_amf -preset medium -crf 25 -movflags +faststart -acodec aac -strict experimental -ab 96k {destFile}");
+              
+              // 264
+              //var cmdLineArgs = $"-i \"{fullPath}\" -c:v h264_amf -preset medium -crf 25 -movflags +faststart -acodec aac -strict experimental -ab 96k \"{destFile}\"";
+
+              // 265
+              //var cmdLineArgs = $"-i \"{fullPath}\" -c:v libx265 -preset medium -crf 25 -movflags +faststart -acodec aac -strict experimental -ab 96k \"{destFile}\"";
+              var cmdLineArgs = $"-i \"{fullPath}\" -c:v hevc_amf -rc cqp -qp_i 26 -qp_p 36 -c:a copy -movflags +faststart  \"{destFile}\"";
+              Console.WriteLine($"Executing ffmpeg {cmdLineArgs}");
+              
+              // Set process info
+              var procInfo = new ProcessStartInfo("ffmpeg", cmdLineArgs);
+              procInfo.RedirectStandardOutput = true;
+              procInfo.UseShellExecute = false;
+
+              // wrap in exception trying to execute external process
               try
               {
                 var procResult = Process.Start(procInfo);
@@ -118,13 +140,14 @@ namespace photo_organiser
               }
               catch (Exception ex)
               {
-                Console.WriteLine($"Exception Occured: {ex.Message} for file {fileName}.");
+                Console.WriteLine($"Exception Occured: {ex.Message} for file {fullPath}.");
               }
 
               // See if new file is indeed smaller
-              var fileSize = new FileInfo(fileName).Length; 
+              var fileSize = new FileInfo(fullPath).Length; 
               var newFileSize = new FileInfo(destFile).Length; 
               
+              // Check if the newly produced file is smallere than the
               var ratio = newFileSize / (float)fileSize;
               if (ratio < 0.93)
               {
@@ -132,14 +155,14 @@ namespace photo_organiser
 		            Console.WriteLine($"Using shrunk movie file {newRatio}% reduction).");
 
                 // Use new file as 
-                fileName = destFile;
+                fullPath = destFile;
               }
 
               // Get date string from filename
               if (!fileList.ContainsKey(dateKey)) {
                 fileList[dateKey] = new List<string>();
               }
-              fileList[dateKey].Add(fileName);
+              fileList[dateKey].Add(fullPath);
             }
 
             //we init this once so that if the function is repeatedly called
@@ -153,7 +176,13 @@ namespace photo_organiser
                 {
                     PropertyItem propItem = myImage.GetPropertyItem(36867);
                     string dateTaken = r.Replace(Encoding.UTF8.GetString(propItem.Value), "-", 2);
-                    return DateTime.Parse(dateTaken);
+                    DateTime dateTime;
+                    if (DateTime.TryParse(dateTaken, out dateTime))
+                    {
+                      return dateTime;
+                    }
+                    Console.WriteLine($"Unable to parse date {dateTaken} for file {path}.");
+                    return DateTime.UnixEpoch;
                 }
             }
         }
@@ -161,6 +190,7 @@ namespace photo_organiser
         static void Main(string[] args)
         {
             var fadService = new FileAndDirectoryService();
+            
 
             Parser.Default.ParseArguments<Options>(args).WithParsed<Options>(o =>
             {
