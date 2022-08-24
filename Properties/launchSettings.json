@@ -1,0 +1,8 @@
+{
+  "profiles": {
+    "photo-organiser": {
+      "commandName": "Project",
+      "commandLineArgs": "-i c:\\programs\\Photos\\Camera -o c:\\programs\\Photos\\Sorted"
+    }
+  }
+}
